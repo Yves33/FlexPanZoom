@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 # -*- coding: iso-8859-1 -*-
+# (c) Yves33
 
 import math
 import matplotlib
@@ -20,11 +21,12 @@ class PanZoomFactory:
                  zoomstrfont=None,
                  zoomstrsize=6):
         '''
-        PAN and Zoom factory designed for mouse:
+        Panand Zoom factory designed for mouse:
         + mouse wheel in axis -> zoomn in, zoom out specified axis
         + mouse button 1 drag in axis -> pan specified axis
         + mouse button 3 drag in axis -> zoom in , zoom at specified axis
         + mouse button 3 clicked in axis -> popup zoomin zoomout
+        + mouse button 3+drag in main: zoom on rectangle selection
         
         The tool works also for polar plots, although the behaviour may seem less predictable.
         + mouse wheel in polar graph:zoom in, zoom out (high value only by default)
@@ -33,7 +35,6 @@ class PanZoomFactory:
         ----------
         tolerance : int
             the minimal size in pixels of the region surrounding axis where mouse clicks will be handled.
-            zoomer tries to determine the size of the axis,
         clip : tuple(float,float)
             the minimal zoom factors (use 1.0,1.0 to fit to data, negative values ( e.g -1.0,-1.0) to disable
         scales: dict
@@ -50,7 +51,12 @@ class PanZoomFactory:
             the font used to display popup. may be an icon font (fa)
         zoomstrsize : int
             the size of the font
+
+        Todo:
+        -----
+        implement autoscale on each axis
         '''
+
         self.figure=figure
         self.canvas=figure.canvas
         self.zoompatch=None
@@ -142,13 +148,17 @@ class PanZoomFactory:
         try:
             ytickparams=ax.yaxis.get_tick_params()
             xtickparams=ax.xaxis.get_tick_params()
+            ## in previous matplotlib versions, xaxis.get_tick_params() used to return a dict with left/right keys.
+            ## recent versions use bottom/top!
+            xtickparams={k.replace("left","bottom").replace("right","top"):v for k,v in xtickparams.items()}
         except:
             #_xtickp=ax.xaxis._translate_tick_params(ax.xaxis._major_tick_kw)
             #_ytickp=ax.yaxis._translate_tick_params(ax.yaxis._major_tick_kw)
             _xtickp=ax.xaxis._major_tick_kw
             _ytickp=ax.yaxis._major_tick_kw
             ytickparams={'left':_xtickp['tick1On'],'right':_xtickp['tick2On']}
-            xtickparams={'left':_ytickp['tick1On'],'right':_ytickp['tick2On']}
+            #xtickparams={'left':_ytickp['tick1On'],'right':_ytickp['tick2On']}
+            xtickparams={'bottom':_ytickp['tick1On'],'top':_ytickp['tick2On']} ## latest API
         width=max(tolerance,ax.yaxis.get_tightbbox(None).width) if not ax.yaxis.get_tightbbox(None) is None else tolerance
         height=max(tolerance,ax.xaxis.get_tightbbox(None).height) if not ax.xaxis.get_tightbbox(None) is None else tolerance
         if ptinrect(l-width,t,l,b,event.x,event.y) and ytickparams['left']:
@@ -159,11 +169,11 @@ class PanZoomFactory:
             ylo,yhi=ax.get_ylim()
             event.ydata=(event.y-b)/(t-b)*(yhi-ylo)+ylo
             return 'right'
-        if ptinrect(l,t,r,t+height,event.x,event.y) and xtickparams['right']:
+        if ptinrect(l,t,r,t+height,event.x,event.y) and xtickparams['top']:
             ylo,yhi=ax.get_ylim()
             event.ydata=(event.y-b)/(t-b)*(yhi-ylo)+ylo
             return 'top'
-        if ptinrect(l,b-height,r,b,event.x,event.y) and xtickparams['left']:
+        if ptinrect(l,b-height,r,b,event.x,event.y) and xtickparams['bottom']:
             ylo,yhi=ax.get_ylim()
             event.ydata=(event.y-b)/(t-b)*(yhi-ylo)+ylo
             return 'bottom'
@@ -174,7 +184,7 @@ class PanZoomFactory:
         return None
     
     def OnMouseDownCartesian(self,event,ax,where):
-        if  (event.button==1 or event.button==3) and where in ['bottom','top','left','right']:
+        if  (event.button==1 or event.button==3) and where in ['bottom','top','left','right','main']:
             (self.x0,self.y0)=(event.xdata,event.ydata)
             self.dragaxis=where
             self.dragax=ax
@@ -184,8 +194,15 @@ class PanZoomFactory:
                 self.figure.canvas.set_cursor(Cursors.RESIZE_HORIZONTAL)
             elif event.button==3 and where in ['left','right']:
                 self.figure.canvas.set_cursor(Cursors.RESIZE_VERTICAL)
-            return
-        
+            elif event.button==3 and where in ['main']:
+                self._bg = self.canvas.copy_from_bbox(self.figure.bbox)
+                self._rectangle_patch = matplotlib.patches.Rectangle(
+                                    xy=(event.xdata, event.ydata), 
+                                    width=0, height=0,
+                                    fill=False, linewidth=1., linestyle='--', color='black')
+                self._event=event
+                ax.add_patch(self._rectangle_patch)
+
     def OnMouseDownPolar(self,event,ax,where):
         if  (event.button==1 or event.button==3) and where in ['theta','radius']:
             (self.x0,self.y0)=(event.xdata,event.ydata)
@@ -272,6 +289,14 @@ class PanZoomFactory:
                 self.stored_event=event
                 self.stored_where=where
                 self.canvas.draw()
+            elif where in ['main']:
+                self._bg = self.canvas.copy_from_bbox(self.figure.bbox)
+                self._rectangle_patch = matplotlib.patches.Rectangle(
+                                    xy=(event.xdata, event.ydata), 
+                                    width=0, height=0,
+                                    fill=False, linewidth=1., linestyle='--', color='black')
+                self._event=event
+                ax.add_patch(self._rectangle_patch)
     
     def OnMouseMotionCartesian(self,event,ax,where):
         if not ax:
@@ -304,6 +329,13 @@ class PanZoomFactory:
                 self.dragax.set_ylim(ylo,yhi)
                 self.y0=event.ydata
                 self.canvas.draw()
+        if event.button==3 and hasattr(self,'_rectangle_patch'):
+            self._rectangle_patch.set_width(event.xdata - self._event.xdata)
+            self._rectangle_patch.set_height(event.ydata - self._event.ydata)
+            self.canvas.restore_region(self._bg)
+            self.figure.draw_artist(self._rectangle_patch)
+            self.canvas.blit(self.figure.bbox)
+            #self.canvas.draw()
 
     def OnMouseMotionPolar(self,event,ax,where):
         #pclamp=lambda x: max(min(x,2*np.pi),0)
@@ -334,6 +366,15 @@ class PanZoomFactory:
         self.dragaxis=None
         self.x0,self.y0=None,None
         self.figure.canvas.set_cursor(Cursors.POINTER)
+        if hasattr(self,'_rectangle_patch'):
+            if (event.xdata!=self._event.xdata) or (event.ydata!=self._event.ydata):
+                ax.set_xlim(min(event.xdata,self._event.xdata), max(event.xdata,self._event.xdata))
+                ax.set_ylim(min(event.ydata,self._event.ydata), max(event.ydata,self._event.ydata))
+            self._rectangle_patch.remove()
+            del self._rectangle_patch
+            del self._event
+            del self._bg
+            self.canvas.draw()
 
     def OnMouseUpPolar(self,event,ax,where):
         self.dragaxis=None
@@ -433,7 +474,7 @@ if __name__=='__main__':
         #ax3.set_ylim(-3,3)
         #ax3.set_xlim(0,2*np.pi/3)
 
-        panzoomer = PanZoomFactory(fig,rightclickpopup=True)
+        panzoomer = PanZoomFactory(fig,rightclickpopup=True,zoomstr="<>|><")
         fig.tight_layout()
         plt.show()
 
