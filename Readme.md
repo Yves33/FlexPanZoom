@@ -7,6 +7,7 @@ A alternate (flexible) pan zoom system for matplotlib axis.
 - drag x/y axis to pan
 - mouse wheel in x/y axis to zoom in / zoom out
 - right click on x/y axis to display popup for zoom in / zoom out
+- right click in main area to zoom on rectangular region
 - support for iconfonts
 
 2 - Restrictions:
